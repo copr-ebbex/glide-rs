@@ -3,7 +3,7 @@
 
 Name:           glide-rs
 Version:        0.6.9
-Release:        2%{?dist}
+Release:        3%{?dist}
 Summary:        Minimalistic media player based on GStreamer and GTK4
 
 License:        MIT
@@ -19,6 +19,8 @@ Source1:        %{name}-%{version}-vendor.tar.xz
 Patch0:         0001-Do-not-force-the-video-widget-to-the-video-s-own-siz.patch
 # Local preference: bare arrow and page keys seek by mpv's default steps.
 Patch1:         0002-Bind-the-bare-arrow-and-page-keys-to-mpv-s-seek-step.patch
+# The position label formatted the playback rate as "1.25.x".
+Patch2:         0003-Print-the-playback-rate-as-1.25x-not-1.25.x.patch
 
 BuildRequires:  cargo-rpm-macros >= 24
 BuildRequires:  meson
@@ -92,6 +94,18 @@ test "$accels" -eq 6
 # substrings, never whole lines, and count the distinct offsets.
 binaccels=$(strings %{buildroot}%{_bindir}/%{origname} | grep -oE 'seek\(-?[0-9]+\)' | sort -u | wc -l)
 test "$binaccels" -eq 6
+# The action must declare the type g_action_parse_detailed_name() produces
+# for a bare integer, which is int32. Declaring INT64 makes GTK refuse every
+# activation on a type mismatch and the keys do nothing, visibly identical
+# to the accelerators never having been bound at all.
+grep -q 'SimpleAction::new("seek"' src/main.rs
+inttype=$(grep -c 'SimpleAction::new("seek", Some(glib::VariantTy::INT32))' src/main.rs || :)
+test "$inttype" -eq 1
+
+# Patch2: the playback rate reads "1.25x", never "1.25.x".
+grep -q 'playback_rate:.2' src/main.rs
+straydot=$(grep -c '{playback_rate}\.x' src/main.rs || :)
+test "$straydot" -eq 0
 
 %files -f %{origname}.lang
 %license LICENSE
@@ -102,6 +116,12 @@ test "$binaccels" -eq 6
 %{_metainfodir}/%{appid}.metainfo.xml
 
 %changelog
+* Wed Sep 09 2026 Erik Berg <fedora@slipsprogrammor.no> - 0.6.9-3
+- Fix Patch1: the seek action declared an int64 parameter, but a detailed
+  action name parses a bare integer as int32, so GTK refused every
+  activation and the new keys silently did nothing
+- Add Patch2: print the playback rate as "1.25x" rather than "1.25.x"
+
 * Wed Sep 09 2026 Erik Berg <fedora@slipsprogrammor.no> - 0.6.9-2
 - Add Patch0: do not set a size request on the video widget, which clipped
   videos taller than the screen in fullscreen (1080x1920 on a 1080p display)

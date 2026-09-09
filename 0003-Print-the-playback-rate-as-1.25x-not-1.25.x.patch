@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Erik Berg <fedora@slipsprogrammor.no>
+Date: Wed, 9 Sep 2026 22:11:50 +0200
+Subject: [PATCH] Print the playback rate as "1.25x", not "1.25.x"
+
+The position label appends the rate whenever it is not 1.0, but the format
+string put a literal dot before the x, so a rate of 1.25 displayed as
+"1.25.x" and 0.75 as "0.75.x". Format to two decimals and drop the stray
+dot.
+---
+ src/main.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/main.rs b/src/main.rs
+index c990050..64298e2 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -603,7 +603,7 @@ impl VideoPlayer {
+                 // FIXME: Ideally it'd be nice to show this on an OSD overlay?
+                 let playback_rate = video_player.player.playback_rate();
+                 if playback_rate != 1.0 {
+-                    format!("{status} @ {playback_rate}.x")
++                    format!("{status} @ {playback_rate:.2}x")
+                 } else {
+                     status
+                 }

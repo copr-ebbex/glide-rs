@@ -13,8 +13,10 @@ actions all keep working as before.
 This adds a "seek" action taking a signed number of seconds, which is what
 the FIXME next to drag-seek-forward asked for: the accelerators bind
 detailed action names ("app.seek(-60)"), so a single action covers every
-step size instead of one action per offset. The parameter is int64 because
-that is what g_variant_parse() infers for a bare integer.
+step size instead of one action per offset. The parameter type is int32,
+which is what g_action_parse_detailed_name() produces for a bare integer;
+declaring int64 makes GTK refuse every activation on a type mismatch, and
+the keys silently do nothing.
 
 The shortcuts window is updated to match.
 ---
@@ -87,7 +89,7 @@ index 75d5535..f67c358 100644
                </object>
              </child>
 diff --git a/src/main.rs b/src/main.rs
-index b25d9c2..72f62fd 100644
+index b25d9c2..c990050 100644
 --- a/src/main.rs
 +++ b/src/main.rs
 @@ -61,6 +61,7 @@ struct VideoPlayer {
@@ -104,9 +106,9 @@ index b25d9c2..72f62fd 100644
  
 +        // Seek by a signed number of seconds, so one action serves every step
 +        // size the keyboard offers: the accelerators bind detailed names like
-+        // "app.seek(-10)". int64 is what g_variant_parse() infers for a bare
-+        // integer in a detailed action name, so the parameter type must match.
-+        let seek_action = gio::SimpleAction::new("seek", Some(glib::VariantTy::INT64));
++        // "app.seek(-10)". A detailed action name parses its parameter as int32,
++        // so the action must declare int32 or the activation is refused.
++        let seek_action = gio::SimpleAction::new("seek", Some(glib::VariantTy::INT32));
 +        gtk_app.add_action(&seek_action);
 +
          let open_media_action = gio::SimpleAction::new("open-media", None);
@@ -125,11 +127,11 @@ index b25d9c2..72f62fd 100644
          });
  
 +        self.seek_action.connect_activate(|_, parameter| {
-+            let seconds = match parameter.and_then(|p| p.get::<i64>()) {
++            let seconds = match parameter.and_then(|p| p.get::<i32>()) {
 +                Some(seconds) => seconds,
 +                None => return,
 +            };
-+            let offset = gst::ClockTime::from_seconds(seconds.unsigned_abs());
++            let offset = gst::ClockTime::from_seconds(seconds.unsigned_abs() as u64);
 +            let direction = if seconds.is_negative() {
 +                SeekDirection::Backward(offset)
 +            } else {
