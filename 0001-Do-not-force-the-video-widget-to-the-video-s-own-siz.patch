@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Erik Berg <fedora@slipsprogrammor.no>
+Date: Wed, 9 Sep 2026 08:45:13 +0200
+Subject: [PATCH] Do not force the video widget to the video's own size
+
+video_dimensions_changed() called gtk_widget_set_size_request() on the
+GtkPicture with the video's intrinsic size. A size request is a *minimum*
+size, so a video taller or wider than the screen could not be shrunk to
+fit: a 1080x1920 portrait video demanded 1920px of height, and in
+fullscreen on a 1920x1080 monitor its top and bottom were clipped.
+
+The call was also redundant. GtkPicture reports the paintable's intrinsic
+size as its natural size, so the window already opens at the video's size,
+and can-shrink (default true) plus content-fit=contain letterbox it from
+there.
+---
+ src/main.rs       | 10 ++++------
+ src/ui_context.rs |  3 ---
+ 2 files changed, 4 insertions(+), 9 deletions(-)
+
+diff --git a/src/main.rs b/src/main.rs
+index d96c001..b25d9c2 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -599,8 +599,10 @@ impl VideoPlayer {
+             PlayerEvent::PositionUpdated => {
+                 self.position_updated();
+             }
+-            PlayerEvent::VideoDimensionsChanged(width, height) => {
+-                self.video_dimensions_changed(width, height);
++            PlayerEvent::VideoDimensionsChanged(..) => {
++                // Nothing to do: GtkPicture reports the paintable's intrinsic
++                // size as its natural size, so the window already opens at the
++                // video's size, and can-shrink lets it scale down from there.
+             }
+             PlayerEvent::StateChanged(ref s) => {
+                 self.playback_state_changed(s);
+@@ -652,10 +654,6 @@ impl VideoPlayer {
+         self.ui_context.playback_state_changed(playback_state);
+     }
+ 
+-    pub fn video_dimensions_changed(&self, width: u32, height: u32) {
+-        self.ui_context.resize_video_renderer(width, height);
+-    }
+-
+     pub fn media_info_updated(&self) {
+         if let Some(info) = self.player.get_media_info() {
+             if let Some(uri) = self.player.get_current_uri() {
+diff --git a/src/ui_context.rs b/src/ui_context.rs
+index f3b0ced..9aca96e 100644
+--- a/src/ui_context.rs
++++ b/src/ui_context.rs
+@@ -512,9 +512,6 @@ impl UIContext {
+         self.video_renderer.set_paintable(Some(paintable));
+     }
+ 
+-    pub fn resize_video_renderer(&self, width: u32, height: u32) {
+-        self.video_renderer.set_size_request(width as i32, height as i32);
+-    }
+ 
+     pub fn set_window_title(&self, title: &str) {
+         self.window.set_title(Some(title));

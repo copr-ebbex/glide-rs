@@ -3,7 +3,7 @@
 
 Name:           glide-rs
 Version:        0.6.9
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Minimalistic media player based on GStreamer and GTK4
 
 License:        MIT
@@ -12,6 +12,13 @@ Source0:        %{url}/archive/%{version}/%{name}-%{version}.tar.gz
 # The crates the build needs, vendored: Copr builds have no network access and
 # neither does mock. Regenerate with ./vendor.sh after every version bump.
 Source1:        %{name}-%{version}-vendor.tar.xz
+
+# A size request on the video widget is a *minimum* size, so a video taller
+# than the screen cannot shrink and is clipped in fullscreen. Not yet sent
+# upstream.
+Patch0:         0001-Do-not-force-the-video-widget-to-the-video-s-own-siz.patch
+# Local preference: bare arrow and page keys seek by mpv's default steps.
+Patch1:         0002-Bind-the-bare-arrow-and-page-keys-to-mpv-s-seek-step.patch
 
 BuildRequires:  cargo-rpm-macros >= 24
 BuildRequires:  meson
@@ -46,7 +53,7 @@ the binary and registered at startup rather than loaded from the GStreamer
 plugin path.
 
 %prep
-%autosetup -n %{origname}-%{version} -a1
+%autosetup -n %{origname}-%{version} -a1 -p1
 %cargo_prep -v vendor
 
 %build
@@ -71,6 +78,21 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/%{appid}.desktop
 sink=$(strings %{buildroot}%{_bindir}/%{origname} | grep -c gtk4paintablesink || :)
 test "$sink" -ge 1
 
+# Patch0: no size request survives on the video widget. Positive control
+# first, so the count below cannot pass by grepping a file that moved.
+grep -q video_renderer src/ui_context.rs
+sizereq=$(cat src/*.rs | grep -c set_size_request || :)
+test "$sizereq" -eq 0
+
+# Patch1: six mpv-style seek accelerators, in the table and in the binary.
+accels=$(grep -cE '\("seek\(-?[0-9]+\)"' src/ui_context.rs || :)
+test "$accels" -eq 6
+# Rust string literals carry a length instead of a NUL, so .rodata runs them
+# together ("...<Primary>Upaudio-volume-increase<Primary>Down..."): match
+# substrings, never whole lines, and count the distinct offsets.
+binaccels=$(strings %{buildroot}%{_bindir}/%{origname} | grep -oE 'seek\(-?[0-9]+\)' | sort -u | wc -l)
+test "$binaccels" -eq 6
+
 %files -f %{origname}.lang
 %license LICENSE
 %doc README.md TODO
@@ -80,6 +102,12 @@ test "$sink" -ge 1
 %{_metainfodir}/%{appid}.metainfo.xml
 
 %changelog
+* Wed Sep 09 2026 Erik Berg <fedora@slipsprogrammor.no> - 0.6.9-2
+- Add Patch0: do not set a size request on the video widget, which clipped
+  videos taller than the screen in fullscreen (1080x1920 on a 1080p display)
+- Add Patch1: bind the bare arrow and page keys to mpv's seek steps, moving
+  playback speed to Ctrl+Page_Up/Page_Down
+
 * Wed Sep 09 2026 Erik Berg <fedora@slipsprogrammor.no> - 0.6.9-1
 - Initial package: Glide 0.6.9, GStreamer/GTK4 media player written in Rust
 - Crates are vendored into the SRPM (Source1, ./vendor.sh) because neither

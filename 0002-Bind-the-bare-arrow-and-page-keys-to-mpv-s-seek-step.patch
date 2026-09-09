@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Erik Berg <fedora@slipsprogrammor.no>
+Date: Wed, 9 Sep 2026 08:46:52 +0200
+Subject: [PATCH] Bind the bare arrow and page keys to mpv's seek steps
+
+Seeking was only reachable through Ctrl+Left/Right, so the bare arrow keys
+did nothing at all while a video played. Bind them the way mpv does by
+default: 10 seconds on Left/Right, a minute on Up/Down, ten minutes on
+Page_Up/Page_Down. Playback speed, which had Page_Up/Page_Down, moves to
+Ctrl+Page_Up/Ctrl+Page_Down; Ctrl+Left/Right and the volume and speed
+actions all keep working as before.
+
+This adds a "seek" action taking a signed number of seconds, which is what
+the FIXME next to drag-seek-forward asked for: the accelerators bind
+detailed action names ("app.seek(-60)"), so a single action covers every
+step size instead of one action per offset. The parameter is int64 because
+that is what g_variant_parse() infers for a bare integer.
+
+The shortcuts window is updated to match.
+---
+ data/net.base_art.Glide.ui | 36 ++++++++++++++++++++++++++++++------
+ src/main.rs                | 25 +++++++++++++++++++++++++
+ src/ui_context.rs          | 12 ++++++++++--
+ 3 files changed, 65 insertions(+), 8 deletions(-)
+
+diff --git a/data/net.base_art.Glide.ui b/data/net.base_art.Glide.ui
+index 75d5535..f67c358 100644
+--- a/data/net.base_art.Glide.ui
++++ b/data/net.base_art.Glide.ui
+@@ -280,14 +280,38 @@ audio-volume-medium-symbolic</property>
+             </child>
+             <child>
+               <object class="GtkShortcutsShortcut">
+-                <property name="accelerator">&lt;primary&gt;Right</property>
+-                <property name="title" translatable="yes">Seek forward</property>
++                <property name="accelerator">&lt;primary&gt;Right Right</property>
++                <property name="title" translatable="yes">Seek forward 10 seconds</property>
+               </object>
+             </child>
+             <child>
+               <object class="GtkShortcutsShortcut">
+-                <property name="accelerator">&lt;primary&gt;Left</property>
+-                <property name="title" translatable="yes">Seek backward</property>
++                <property name="accelerator">&lt;primary&gt;Left Left</property>
++                <property name="title" translatable="yes">Seek backward 10 seconds</property>
++              </object>
++            </child>
++            <child>
++              <object class="GtkShortcutsShortcut">
++                <property name="accelerator">Up</property>
++                <property name="title" translatable="yes">Seek forward 1 minute</property>
++              </object>
++            </child>
++            <child>
++              <object class="GtkShortcutsShortcut">
++                <property name="accelerator">Down</property>
++                <property name="title" translatable="yes">Seek backward 1 minute</property>
++              </object>
++            </child>
++            <child>
++              <object class="GtkShortcutsShortcut">
++                <property name="accelerator">Page_Up</property>
++                <property name="title" translatable="yes">Seek forward 10 minutes</property>
++              </object>
++            </child>
++            <child>
++              <object class="GtkShortcutsShortcut">
++                <property name="accelerator">Page_Down</property>
++                <property name="title" translatable="yes">Seek backward 10 minutes</property>
+               </object>
+             </child>
+             <child>
+@@ -316,13 +340,13 @@ audio-volume-medium-symbolic</property>
+             </child>
+             <child>
+               <object class="GtkShortcutsShortcut">
+-                <property name="accelerator">Page_Up</property>
++                <property name="accelerator">&lt;primary&gt;Page_Up</property>
+                 <property name="title" translatable="yes">Increase playback speed</property>
+               </object>
+             </child>
+             <child>
+               <object class="GtkShortcutsShortcut">
+-                <property name="accelerator">Page_Down</property>
++                <property name="accelerator">&lt;primary&gt;Page_Down</property>
+                 <property name="title" translatable="yes">Decrease playback speed</property>
+               </object>
+             </child>
+diff --git a/src/main.rs b/src/main.rs
+index b25d9c2..72f62fd 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -61,6 +61,7 @@ struct VideoPlayer {
+     seek_forward_action: gio::SimpleAction,
+     drag_seek_forward_action: gio::SimpleAction,
+     seek_backward_action: gio::SimpleAction,
++    seek_action: gio::SimpleAction,
+     subtitle_action: gio::SimpleAction,
+     audio_visualization_action: gio::SimpleAction,
+     audio_track_action: gio::SimpleAction,
+@@ -131,6 +132,13 @@ impl VideoPlayer {
+         let seek_backward_action = gio::SimpleAction::new_stateful("seek-backward", None, &false.to_variant());
+         gtk_app.add_action(&seek_backward_action);
+ 
++        // Seek by a signed number of seconds, so one action serves every step
++        // size the keyboard offers: the accelerators bind detailed names like
++        // "app.seek(-10)". int64 is what g_variant_parse() infers for a bare
++        // integer in a detailed action name, so the parameter type must match.
++        let seek_action = gio::SimpleAction::new("seek", Some(glib::VariantTy::INT64));
++        gtk_app.add_action(&seek_action);
++
+         let open_media_action = gio::SimpleAction::new("open-media", None);
+         gtk_app.add_action(&open_media_action);
+ 
+@@ -251,6 +259,7 @@ impl VideoPlayer {
+             seek_forward_action,
+             drag_seek_forward_action,
+             seek_backward_action,
++            seek_action,
+             subtitle_action,
+             audio_visualization_action,
+             audio_track_action,
+@@ -324,6 +333,22 @@ impl VideoPlayer {
+             });
+         });
+ 
++        self.seek_action.connect_activate(|_, parameter| {
++            let seconds = match parameter.and_then(|p| p.get::<i64>()) {
++                Some(seconds) => seconds,
++                None => return,
++            };
++            let offset = gst::ClockTime::from_seconds(seconds.unsigned_abs());
++            let direction = if seconds.is_negative() {
++                SeekDirection::Backward(offset)
++            } else {
++                SeekDirection::Forward(offset)
++            };
++            with_video_player!(video_player {
++                video_player.player.seek(&direction);
++            });
++        });
++
+         self.volume_decrease_action.connect_change_state(|_, _| {
+             with_video_player!(video_player {
+                     video_player.player.decrease_volume();
+diff --git a/src/ui_context.rs b/src/ui_context.rs
+index 9aca96e..21ed32e 100644
+--- a/src/ui_context.rs
++++ b/src/ui_context.rs
+@@ -190,6 +190,13 @@ impl UIContext {
+                 ("pause", vec!["space"]),
+                 ("seek-forward", vec!["<Primary>Right"]),
+                 ("seek-backward", vec!["<Primary>Left"]),
++                // mpv's default seek steps, on the bare arrow and page keys
++                ("seek(10)", vec!["Right"]),
++                ("seek(-10)", vec!["Left"]),
++                ("seek(60)", vec!["Up"]),
++                ("seek(-60)", vec!["Down"]),
++                ("seek(600)", vec!["Page_Up"]),
++                ("seek(-600)", vec!["Page_Down"]),
+                 ("audio-volume-increase", vec!["<Primary>Up"]),
+                 ("audio-volume-decrease", vec!["<Primary>Down"]),
+                 ("audio-mute", vec!["<Primary>m"]),
+@@ -197,8 +204,9 @@ impl UIContext {
+                 ("dump-pipeline", vec!["<Ctrl>d"]),
+                 ("show-shortcuts", vec!["<Primary>question"]),
+                 ("video-frame-step", vec!["<Primary>n"]),
+-                ("speed-increase", vec!["Page_Up"]),
+-                ("speed-decrease", vec!["Page_Down"]),
++                // Page_Up/Page_Down now seek, so speed moves onto Ctrl
++                ("speed-increase", vec!["<Primary>Page_Up"]),
++                ("speed-decrease", vec!["<Primary>Page_Down"]),
+             ];
+             for (action, accels) in accels_per_action.iter() {
+                 app.set_accels_for_action(&format!("app.{action}"), accels);
